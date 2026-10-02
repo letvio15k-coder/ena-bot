@@ -1,4 +1,5 @@
 import os, threading, requests, time
+from collections import Counter
 from flask import Flask
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -11,7 +12,7 @@ app_flask = Flask(__name__)
 def home():
     return "ENA Bot 10 Lenh FIBO Running!"
 
-CONTRACT = "0x57e114B691Bd7404aA95283C9fE8854c063fA8bd" # ENA
+CONTRACT = "0x57e114B691Bd7404aA95283C9fE8854c063fA8bd" # ENA ETH
 SYMBOL_BINANCE = "ENAUSDT"
 SYMBOL_OKX = "ENA-USDT"
 SYMBOL_NAME = "ENA"
@@ -95,18 +96,27 @@ def get_whales():
     except Exception as e: return None, str(e)
 
 def get_top_holders():
-    # FIX FINAL: Ethplorer freekey không hỗ trợ ENA
+    # FIX FINAL cho ENA: Ethplorer freekey không hỗ trợ -> dùng Etherscan để tính top
     try:
-        url = f"https://api.ethplorer.io/getTopTokenHolders/{CONTRACT}?apiKey=freekey&limit=20"
-        r = requests.get(url, timeout=15).json()
-        if 'holders' in r and r['holders']:
-            return r['holders'], None
-        if 'error' in r:
-            # Nếu lỗi 150 như ảnh bạn gửi -> báo đẹp
-            return None, f"⚠️ TOP {SYMBOL_NAME} hiện Ethplorer chưa hỗ trợ (token mới).\nDùng /price /whale /signal /fibo vẫn OK nhé!"
+        url = f"https://api.etherscan.io/v2/api?chainid=1&module=account&action=tokentx&contractaddress={CONTRACT}&page=1&offset=200&sort=desc&apikey={ETHERSCAN_API}"
+        r = requests.get(url, timeout=20).json()
+        if r.get('status') == '1' and r.get('result'):
+            c = Counter()
+            for tx in r['result']:
+                try:
+                    v = int(tx['value'])/10**18
+                    if v > 10:
+                        c[tx['to']] += v
+                except: pass
+            holders = []
+            for addr, bal in c.most_common(10):
+                holders.append({'address': addr, 'balance': str(int(bal*10**18)), 'share': 0, 'total': bal})
+            if holders:
+                return holders, None
     except Exception as e:
-        return None, f"⚠️ TOP {SYMBOL_NAME} tạm lỗi: {e}"
-    return None, f"⚠️ TOP {SYMBOL_NAME} tạm chưa có dữ liệu"
+        print(f"Top error: {e}")
+
+    return None, f"⚠️ TOP {SYMBOL_NAME} xem chuẩn nhất tại:\nhttps://etherscan.io/token/{CONTRACT}#balances"
 
 def get_fibo_data(timeframe="1D"):
     try:
@@ -130,8 +140,9 @@ def get_fibo_data(timeframe="1D"):
         return swing_high, swing_low, current, levels, bar
     except Exception as e: return None, None, None, str(e), None
 
+# --- COMMANDS ---
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"🤖 Bot {SYMBOL_NAME} Phan Rang PRO - 10 Lệnh FIX FINAL\n\n/price /whale /signal /top /top100\n/fibo /fibo4h\nAUTO: /auto_price /auto_whale /auto_signal /auto_fibo")
+    await update.message.reply_text(f"🤖 Bot {SYMBOL_NAME} FIX FINAL - 10 Lệnh\n\n/price /whale /signal /top /top100\n/fibo /fibo4h\nAUTO: /auto_price /auto_whale /auto_signal /auto_fibo")
 
 async def price_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(get_price())
@@ -150,22 +161,25 @@ async def whale_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, disable_web_page_preview=True)
 
 async def top_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⏳ Đang lấy Top...")
+    await update.message.reply_text("⏳ Đang lấy Top ENA...")
     holders, err = get_top_holders()
-    if err: await update.message.reply_text(err); return
-    msg=f"🐋 TOP 10 VÍ NẮM {SYMBOL_NAME}:\n\n"
+    if err:
+        await update.message.reply_text(err, disable_web_page_preview=True)
+        return
+    msg=f"🐋 TOP 10 VÍ NẮM {SYMBOL_NAME} (tính từ 200 tx gần nhất):\n\n"
     for i, h in enumerate(holders[:10], 1):
-        addr=h['address']; bal=float(h['balance'])/10**18; percent=float(h['share'])
-        msg+=f"{i}. {get_wallet_label(addr)} {addr[:6]}...{addr[-4:]}\n💰 {bal:,.0f} ({percent:.2f}%)\n\n"
-    top10=sum(float(x['share']) for x in holders[:10])
-    msg+=f"📊 Top10: {top10:.2f}%"
+        addr=h['address']; bal = h.get('total', float(h['balance'])/10**18)
+        msg+=f"{i}. {get_wallet_label(addr)} {addr[:6]}...{addr[-4:]}\n💰 {bal:,.0f} {SYMBOL_NAME}\n\n"
     await update.message.reply_text(msg)
 
 async def top100_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     holders, err = get_top_holders()
-    if err: await update.message.reply_text(err); return
-    calc=lambda n: sum(float(x['share']) for x in holders[:n])
-    msg=f"📈 PHÂN BỔ {SYMBOL_NAME}\n\nTop10: {calc(10):.2f}%\nTop20: {calc(20):.2f}%"
+    if err: await update.message.reply_text(err, disable_web_page_preview=True); return
+    msg=f"📈 TOP ENA (từ tx gần nhất)\n"
+    for i, h in enumerate(holders[:10], 1):
+        bal = h.get('total', float(h['balance'])/10**18)
+        msg+=f"Top {i}: {bal:,.0f}\n"
+    msg+=f"\nXem đủ Top 100 tại Etherscan nhé!"
     await update.message.reply_text(msg)
 
 async def fibo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -186,6 +200,7 @@ async def fibo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def auto_price_job(context: ContextTypes.DEFAULT_TYPE):
     try: await context.bot.send_message(chat_id=context.job.chat_id, text=f"⏰ AUTO GIÁ 1H\n{get_price()}\n15p: {get_price_change_15m():+.2f}%")
     except: pass
+
 async def auto_whale_job(context: ContextTypes.DEFAULT_TYPE):
     whales, err = get_whales()
     if err or not whales: return
@@ -201,9 +216,11 @@ async def auto_whale_job(context: ContextTypes.DEFAULT_TYPE):
             msg=(f"🚨 CÁ VOI 100k+!\n💰 {v:,.0f} {SYMBOL_NAME} (~${usd_val:,.0f})\n💵 ${price_val:.5f} ({source})\n\nTừ: {from_label}\nĐến: {to_label}\n👉 {action}\nhttps://etherscan.io/tx/{tx['hash']}")
             await context.bot.send_message(chat_id=context.job.chat_id, text=msg, disable_web_page_preview=True)
         except: pass
+
 async def auto_signal_job(context: ContextTypes.DEFAULT_TYPE):
     sig=get_signal()
     if "MẠNH" in sig: await context.bot.send_message(chat_id=context.job.chat_id, text=f"🚨 AUTO SIGNAL\n{sig}")
+
 async def auto_fibo_job(context: ContextTypes.DEFAULT_TYPE):
     high, low, current, levels, bar = get_fibo_data("4H")
     if isinstance(levels, str): return
@@ -219,6 +236,7 @@ async def auto_price_cmd(update, context):
         await update.message.reply_text("Đã TẮT auto giá"); return
     context.job_queue.run_repeating(auto_price_job, interval=3600, first=10, chat_id=chat_id, name=f"price_{chat_id}")
     await update.message.reply_text("Đã BẬT auto giá 1h")
+
 async def auto_whale_cmd(update, context):
     chat_id=update.effective_chat.id; jobs=context.job_queue.get_jobs_by_name(f"whale_{chat_id}")
     if jobs:
@@ -226,6 +244,7 @@ async def auto_whale_cmd(update, context):
         await update.message.reply_text("Đã TẮT auto cá voi"); return
     context.job_queue.run_repeating(auto_whale_job, interval=300, first=5, chat_id=chat_id, name=f"whale_{chat_id}")
     await update.message.reply_text("Đã BẬT auto cá voi PRO")
+
 async def auto_signal_cmd(update, context):
     chat_id=update.effective_chat.id; jobs=context.job_queue.get_jobs_by_name(f"sig_{chat_id}")
     if jobs:
@@ -233,6 +252,7 @@ async def auto_signal_cmd(update, context):
         await update.message.reply_text("Đã TẮT auto tín hiệu"); return
     context.job_queue.run_repeating(auto_signal_job, interval=900, first=5, chat_id=chat_id, name=f"sig_{chat_id}")
     await update.message.reply_text("Đã BẬT auto tín hiệu")
+
 async def auto_fibo_cmd(update, context):
     chat_id=update.effective_chat.id; jobs=context.job_queue.get_jobs_by_name(f"fibo_{chat_id}")
     if jobs:
@@ -260,4 +280,5 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("auto_signal", auto_signal_cmd))
     app.add_handler(CommandHandler("auto_fibo", auto_fibo_cmd))
     print(f"{SYMBOL_NAME} Bot FIX FINAL starting...")
-    app.run_polling(stop_signals=None, close_loop=False)
+    # FIX CONFLICT QUAN TRONG
+    app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES, close_loop=False, stop_signals=None)
