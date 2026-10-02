@@ -95,12 +95,18 @@ def get_whales():
     except Exception as e: return None, str(e)
 
 def get_top_holders():
+    # FIX FINAL: Ethplorer freekey không hỗ trợ ENA
     try:
-        url = f"https://api.ethplorer.io/getTopTokenHolders/{CONTRACT}?apiKey=freekey&limit=100"
-        r = requests.get(url, timeout=20).json()
-        if 'holders' not in r: return None, f"Lỗi Top: {r}"
-        return r['holders'], None
-    except Exception as e: return None, str(e)
+        url = f"https://api.ethplorer.io/getTopTokenHolders/{CONTRACT}?apiKey=freekey&limit=20"
+        r = requests.get(url, timeout=15).json()
+        if 'holders' in r and r['holders']:
+            return r['holders'], None
+        if 'error' in r:
+            # Nếu lỗi 150 như ảnh bạn gửi -> báo đẹp
+            return None, f"⚠️ TOP {SYMBOL_NAME} hiện Ethplorer chưa hỗ trợ (token mới).\nDùng /price /whale /signal /fibo vẫn OK nhé!"
+    except Exception as e:
+        return None, f"⚠️ TOP {SYMBOL_NAME} tạm lỗi: {e}"
+    return None, f"⚠️ TOP {SYMBOL_NAME} tạm chưa có dữ liệu"
 
 def get_fibo_data(timeframe="1D"):
     try:
@@ -125,7 +131,7 @@ def get_fibo_data(timeframe="1D"):
     except Exception as e: return None, None, None, str(e), None
 
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"🤖 Bot {SYMBOL_NAME} Phan Rang PRO - 10 Lệnh\n\n/price /whale /signal /top /top100\n/fibo /fibo4h\nAUTO: /auto_price /auto_whale /auto_signal /auto_fibo")
+    await update.message.reply_text(f"🤖 Bot {SYMBOL_NAME} Phan Rang PRO - 10 Lệnh FIX FINAL\n\n/price /whale /signal /top /top100\n/fibo /fibo4h\nAUTO: /auto_price /auto_whale /auto_signal /auto_fibo")
 
 async def price_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(get_price())
@@ -144,22 +150,22 @@ async def whale_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, disable_web_page_preview=True)
 
 async def top_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⏳ Đang lấy Top 100...")
+    await update.message.reply_text("⏳ Đang lấy Top...")
     holders, err = get_top_holders()
     if err: await update.message.reply_text(err); return
     msg=f"🐋 TOP 10 VÍ NẮM {SYMBOL_NAME}:\n\n"
     for i, h in enumerate(holders[:10], 1):
         addr=h['address']; bal=float(h['balance'])/10**18; percent=float(h['share'])
         msg+=f"{i}. {get_wallet_label(addr)} {addr[:6]}...{addr[-4:]}\n💰 {bal:,.0f} ({percent:.2f}%)\n\n"
-    top10=sum(float(x['share']) for x in holders[:10]); top100=sum(float(x['share']) for x in holders[:100])
-    msg+=f"📊 Top10: {top10:.2f}% | Top100: {top100:.2f}%"
+    top10=sum(float(x['share']) for x in holders[:10])
+    msg+=f"📊 Top10: {top10:.2f}%"
     await update.message.reply_text(msg)
 
 async def top100_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     holders, err = get_top_holders()
     if err: await update.message.reply_text(err); return
     calc=lambda n: sum(float(x['share']) for x in holders[:n])
-    msg=f"📈 PHÂN BỔ {SYMBOL_NAME}\n\nTop10: {calc(10):.2f}%\nTop20: {calc(20):.2f}%\nTop50: {calc(50):.2f}%\nTop100: {calc(100):.2f}%"
+    msg=f"📈 PHÂN BỔ {SYMBOL_NAME}\n\nTop10: {calc(10):.2f}%\nTop20: {calc(20):.2f}%"
     await update.message.reply_text(msg)
 
 async def fibo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -167,20 +173,19 @@ async def fibo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"⏳ Đang tính Fibonacci {timeframe}...")
     high, low, current, levels, bar = get_fibo_data(timeframe)
     if isinstance(levels, str): await update.message.reply_text(levels); return
-    msg = f"📐 FIBONACCI {SYMBOL_NAME} - {bar}\nĐỉnh: ${high:.4f} | Đáy: ${low:.4f}\nGiá hiện tại: ${current:.4f}\n\n"
+    msg = f"📐 FIBONACCI {SYMBOL_NAME} - {bar}\nĐỉnh: ${high:.4f} | Đáy: ${low:.4f}\nGiá: ${current:.4f}\n\n"
     for k,v in levels.items():
         distance = (current - v)/v*100
         icon = "👉 " if abs(distance) < 1.5 else " "
         msg += f"{icon}{k}: ${v:.4f} ({distance:+.1f}%)\n"
-    if current < levels["38.2%"]: msg += "\n🟢 Gần đáy - Vùng MUA đẹp"
-    elif current > levels["61.8% (Vàng)"]: msg += "\n🔴 Gần đỉnh - Cẩn thận chốt"
-    else: msg += "\n⚪ Vùng trung tính"
+    if current < levels["38.2%"]: msg += "\n🟢 Gần đáy - MUA đẹp"
+    elif current > levels["61.8% (Vàng)"]: msg += "\n🔴 Gần đỉnh - Chốt"
+    else: msg += "\n⚪ Trung tính"
     await update.message.reply_text(msg)
 
 async def auto_price_job(context: ContextTypes.DEFAULT_TYPE):
     try: await context.bot.send_message(chat_id=context.job.chat_id, text=f"⏰ AUTO GIÁ 1H\n{get_price()}\n15p: {get_price_change_15m():+.2f}%")
     except: pass
-
 async def auto_whale_job(context: ContextTypes.DEFAULT_TYPE):
     whales, err = get_whales()
     if err or not whales: return
@@ -196,17 +201,15 @@ async def auto_whale_job(context: ContextTypes.DEFAULT_TYPE):
             msg=(f"🚨 CÁ VOI 100k+!\n💰 {v:,.0f} {SYMBOL_NAME} (~${usd_val:,.0f})\n💵 ${price_val:.5f} ({source})\n\nTừ: {from_label}\nĐến: {to_label}\n👉 {action}\nhttps://etherscan.io/tx/{tx['hash']}")
             await context.bot.send_message(chat_id=context.job.chat_id, text=msg, disable_web_page_preview=True)
         except: pass
-
 async def auto_signal_job(context: ContextTypes.DEFAULT_TYPE):
     sig=get_signal()
     if "MẠNH" in sig: await context.bot.send_message(chat_id=context.job.chat_id, text=f"🚨 AUTO SIGNAL\n{sig}")
-
 async def auto_fibo_job(context: ContextTypes.DEFAULT_TYPE):
     high, low, current, levels, bar = get_fibo_data("4H")
     if isinstance(levels, str): return
     for k,v in levels.items():
         if abs(current - v)/v*100 < 0.8:
-            await context.bot.send_message(chat_id=context.job.chat_id, text=f"📐 AUTO FIBO 4H\n{SYMBOL_NAME} ${current:.4f} đang chạm {k} ${v:.4f}")
+            await context.bot.send_message(chat_id=context.job.chat_id, text=f"📐 AUTO FIBO 4H\n{SYMBOL_NAME} ${current:.4f} chạm {k} ${v:.4f}")
             break
 
 async def auto_price_cmd(update, context):
@@ -216,7 +219,6 @@ async def auto_price_cmd(update, context):
         await update.message.reply_text("Đã TẮT auto giá"); return
     context.job_queue.run_repeating(auto_price_job, interval=3600, first=10, chat_id=chat_id, name=f"price_{chat_id}")
     await update.message.reply_text("Đã BẬT auto giá 1h")
-
 async def auto_whale_cmd(update, context):
     chat_id=update.effective_chat.id; jobs=context.job_queue.get_jobs_by_name(f"whale_{chat_id}")
     if jobs:
@@ -224,7 +226,6 @@ async def auto_whale_cmd(update, context):
         await update.message.reply_text("Đã TẮT auto cá voi"); return
     context.job_queue.run_repeating(auto_whale_job, interval=300, first=5, chat_id=chat_id, name=f"whale_{chat_id}")
     await update.message.reply_text("Đã BẬT auto cá voi PRO")
-
 async def auto_signal_cmd(update, context):
     chat_id=update.effective_chat.id; jobs=context.job_queue.get_jobs_by_name(f"sig_{chat_id}")
     if jobs:
@@ -232,7 +233,6 @@ async def auto_signal_cmd(update, context):
         await update.message.reply_text("Đã TẮT auto tín hiệu"); return
     context.job_queue.run_repeating(auto_signal_job, interval=900, first=5, chat_id=chat_id, name=f"sig_{chat_id}")
     await update.message.reply_text("Đã BẬT auto tín hiệu")
-
 async def auto_fibo_cmd(update, context):
     chat_id=update.effective_chat.id; jobs=context.job_queue.get_jobs_by_name(f"fibo_{chat_id}")
     if jobs:
@@ -259,5 +259,5 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("auto_whale", auto_whale_cmd))
     app.add_handler(CommandHandler("auto_signal", auto_signal_cmd))
     app.add_handler(CommandHandler("auto_fibo", auto_fibo_cmd))
-    print(f"{SYMBOL_NAME} Bot starting...")
+    print(f"{SYMBOL_NAME} Bot FIX FINAL starting...")
     app.run_polling(stop_signals=None, close_loop=False)
